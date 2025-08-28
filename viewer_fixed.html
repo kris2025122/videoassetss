@@ -12,6 +12,16 @@
       font:12px/1.4 monospace;white-space:pre-wrap;z-index:10;border-bottom-right-radius:8px
     }
   </style>
+
+  <!-- Import map: resuelve "three" y sus módulos de /examples -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
 </head>
 <body>
 <div id="log">Inicializando…</div>
@@ -20,43 +30,42 @@
 const $log=document.getElementById('log');
 const log=(m)=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Tu KSPLAT en la RAÍZ del repo (ya comprobaste que descarga):
+// Tu KSPLAT en la RAÍZ del repo:
 const FILE_PATH = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 
-// Mostrar cualquier error global en el log
+// Captura de errores para mostrarlos en pantalla
 window.addEventListener('error', e=> log('ERROR(win): '+e.message));
 window.addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
   try{
     log("Cargando librería…");
-    // Import desde CDN (ruta correcta: /build/)
+    // Importa la librería con la ruta correcta /build/
     const GS = await import("https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js");
 
-    // Verifica que el archivo exista en Pages (debe dar 200)
+    // Verifica que el archivo exista en Pages
     const head = await fetch(FILE_PATH, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE_PATH);
 
-    // Viewer integrado SIN WebXR ni SharedArrayBuffer (compatible con GitHub Pages)
+    // Viewer integrado compatible con GitHub Pages (sin SharedArrayBuffer)
     const viewer = new GS.Viewer({
-      webXRMode: GS.WebXRMode.None,
-      sharedMemoryForWorkers: false, // COOP/COEP no requerido en Pages
-      gpuAcceleratedSort: false,     // RECOMENDADO cuando sharedMemoryForWorkers=false
+      webXRMode: GS.WebXRMode.None,   // primero prueba en Chrome desktop
+      sharedMemoryForWorkers: false,  // evita COOP/COEP
+      gpuAcceleratedSort: false,      // recomendado cuando lo anterior es false
       useBuiltInControls: true,
       ignoreDevicePixelRatio: true,
       antialiased: true,
       logLevel: GS.LogLevel.Info
     });
 
-    // Carga del KSPLAT (no toco splatAlphaRemovalThreshold: por defecto 1/255)
     await viewer.addSplatScene(FILE_PATH, {
       showLoadingUI: true
+      // splatAlphaRemovalThreshold por defecto = 1 (no lo tocamos)
     });
 
-    // Arranca el render
     viewer.start();
-    log("Listo: debería verse en Chrome. En Quest 3 también funciona esta misma URL.");
+    log("Listo: debería verse en Chrome. Luego puedes abrir esta misma URL en Quest 3.");
   }catch(err){
     log("ERROR: "+(err?.message||err));
   }
