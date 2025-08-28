@@ -24,66 +24,83 @@ const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 // Tu KSPLAT en la RAÍZ del repo:
 const FILE = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 
-// Errores visibles
+// Errores a pantalla
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
   try{
     log("Cargando módulos…");
-    // Importa TODO vía esm.sh (evita problemas de 'three' y submódulos)
+    // Importa TODO vía esm.sh y fuerza a que ambos usen la MISMA versión de three
     const THREE = await import("https://esm.sh/three@0.160.0");
-    const { OrbitControls } = await import("https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js?deps=three@0.160.0");
-    const GS = await import("https://esm.sh/@mkkellogg/gaussian-splats-3d@0.4.7?deps=three@0.160.0");
+    const GS    = await import("https://esm.sh/@mkkellogg/gaussian-splats-3d@0.4.7?deps=three@0.160.0");
 
-    // Verifica que el archivo existe
+    // Verifica que el archivo exista (200 OK)
     const head = await fetch(FILE, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
 
-    // Escena básica
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
-    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    // Escena
+    const scene   = new THREE.Scene();
+    const camera  = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
+    const renderer= new THREE.WebGLRenderer({ antialias:true, alpha:false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.75));
     renderer.setSize(innerWidth, innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // Controles de órbita
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-
-    // Carga del KSPLAT
+    // Carga KSPLAT con el SplatLoader
     log("Cargando KSPLAT…");
     const loader = new GS.GaussianSplatThreeJS.SplatLoader();
     const t0 = performance.now();
     const splat = await loader.load(FILE, (p)=>{
       if(p && p.total){
         const pct = Math.round(100*p.loaded/p.total);
-        if (pct % 10 === 0) log(`Progreso: ${pct}%`);
+        if(pct % 10 === 0) log(`Progreso: ${pct}%`);
       }
     });
     log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
 
-    // Ajustes y encuadre automático
+    // Añadir y encuadrar
     splat.frustumCulled = false;
     scene.add(splat);
 
-    // Calcula bounding box y centra cámara/controles
     const box = new THREE.Box3().setFromObject(splat);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const radius = size.length() * 0.5;
-    const dist = radius * 1.5;
+    const dist = radius * 1.6;
 
     camera.near = Math.max(0.01, radius/1000);
     camera.far  = Math.max(2000, radius*10);
     camera.updateProjectionMatrix();
 
     camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, dist)));
-    controls.target.copy(center);
-    controls.update();
+    camera.lookAt(center);
+
+    // Control orbital simple con mouse (sin imports extra)
+    let rotating=false, lastX=0, lastY=0, az=0, el=0;
+    function setCam(){
+      const x = dist*Math.cos(el)*Math.sin(az);
+      const y = dist*Math.sin(el);
+      const z = dist*Math.cos(el)*Math.cos(az);
+      camera.position.set(center.x+x, center.y+y, center.z+z);
+      camera.lookAt(center);
+    }
+    addEventListener('mousedown', e=>{ rotating=true; lastX=e.clientX; lastY=e.clientY; });
+    addEventListener('mouseup',   ()=> rotating=false);
+    addEventListener('mousemove', e=>{
+      if(!rotating) return;
+      const dx=(e.clientX-lastX)/innerWidth, dy=(e.clientY-lastY)/innerHeight;
+      lastX=e.clientX; lastY=e.clientY;
+      az += dx*Math.PI; el = Math.max(-Math.PI/2+0.01, Math.min(Math.PI/2-0.01, el+dy*Math.PI));
+      setCam();
+    });
+    addEventListener('wheel', e=>{
+      e.preventDefault();
+      const factor = (e.deltaY>0? 1.1 : 0.9);
+      const v = camera.position.clone().sub(center).multiplyScalar(factor);
+      camera.position.copy(center.clone().add(v));
+    }, {passive:false});
 
     // Resize
     addEventListener('resize', ()=>{
@@ -92,15 +109,15 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // Render loop
+    // Bucle
     function tick(){
-      controls.update();
       renderer.render(scene, camera);
       requestAnimationFrame(tick);
     }
+    setCam();
     tick();
 
-    log("Listo. Si no ves nada, usa la rueda para acercarte o arrastra para orbitar.");
+    log("Listo. Arrastra para orbitar y usa la rueda para acercarte.");
   }catch(err){
     log("ERROR: "+(err?.message||err));
   }
