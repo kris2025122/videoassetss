@@ -10,10 +10,7 @@
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
   </style>
 
-  <!-- Shims para import maps -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
-
-  <!-- Import map: three + GS3D (ESM) -->
   <script type="importmap-shim">
   {
     "imports": {
@@ -30,12 +27,11 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Tu KSPLAT en la raíz
 const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 
-// Parámetros fáciles de ajustar
-const DIST_MULT = 1.4;      // qué tan cerca inicia la cámara (1.2–2.0)
-const ROTATE = { x: Math.PI, y: 0, z: 0 }; // 180° en X. Cambia si lo prefieres.
+// Ajustes rápidos
+const ROTATE = { x: Math.PI, y: 0, z: 0 };  // 180° en X (cámbialo si lo quieres en Y/Z)
+const DIST_MULT = 1.35;                     // 1.2–2.0 (más chico = más cerca)
 
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
@@ -55,10 +51,10 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
 
-    // Viewer oficial: activamos VR (Inline) para que aparezca el botón
+    // Botón VR visible (Inline); en Quest 3 podrás entrar a VR
     const viewer = new GS.Viewer({
-      webXRMode: GS.WebXRMode?.Inline ?? 1, // muestra botón VR (Quest 3)
-      sharedMemoryForWorkers: false,
+      webXRMode: GS.WebXRMode?.Inline ?? 1,
+      sharedMemoryForWorkers: false, // Pages no es COOP/COEP
       gpuAcceleratedSort: false,
       useBuiltInControls: true,
       ignoreDevicePixelRatio: true,
@@ -66,33 +62,52 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       logLevel: GS.LogLevel?.Info ?? 1
     });
 
-    // Carga KSPLAT
-    const node = await viewer.addSplatScene(FILE, {
+    // Carga la escena KSplat
+    await viewer.addSplatScene(FILE, {
       format: GS.SceneFormat.KSplat,
       showLoadingUI: true
     });
 
-    // Obtenemos el objeto (algunas builds devuelven el mesh directo, otras .scene)
-    const obj = node?.scene ?? node;
-    if (!obj) throw new Error('No se obtuvo el objeto de la escena.');
+    // ===== Localiza el objeto splat dentro del árbol Three.js =====
+    const roots = [
+      viewer.scene, viewer._scene,
+      viewer.renderer?.scene, viewer.renderer?._scene,
+      viewer.threeScene, viewer._threeScene,
+      viewer.stage?.scene, viewer.stage?._scene,
+    ].filter(Boolean);
 
-    // --- ROTACIÓN y CENTRADO ---
-    // Calculamos bounding box para centrar y definir distancia cómoda
+    const found = [];
+    const scan = (root)=>{
+      try{
+        root.traverse?.(o=>{
+          const name = (o.name||'') + ' ' + (o.type||'');
+          if (
+            /splat/i.test(name) ||
+            o.isPoints || o.isMesh ||
+            (o.material && (o.material.sizeAttenuation!==undefined))
+          ){
+            found.push(o);
+          }
+        });
+      }catch(_){}
+    };
+    roots.forEach(scan);
+
+    let obj = found.sort((a,b)=>(b.children?.length||0)-(a.children?.length||0))[0] || roots[0];
+    if(!obj) throw new Error('No se encontró el objeto splat en la escena.');
+
+    // ===== Centrado + Rotación =====
+    // centra el modelo en el origen
     const box = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
     const radius = Math.max(1e-6, size.length()*0.5);
 
-    // Trasladamos el modelo para que su centro quede en el origen
     obj.position.sub(center);
-
-    // Aplicamos la rotación deseada
     obj.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);
     obj.updateMatrixWorld(true);
 
-    // --- AJUSTE DE CÁMARA / CONTROLES ---
-    // Intentamos mover la cámara del viewer si está expuesta;
-    // si no, ajustamos controles/targets si existen.
+    // ===== Cámara / Controles =====
     const cam =
       viewer.camera || viewer._camera || viewer.renderer?.camera || null;
     const controls =
@@ -112,9 +127,8 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       controls.update?.();
     }
 
-    // Arranca el render
     viewer.start();
-    log('Listo. Deberías ver el modelo centrado. Botón VR activo en Quest 3 (https).');
+    log('Listo. Rotado 180°, centrado y cámara cerca. Botón VR activo (Inline).');
 
   }catch(err){
     log('ERROR: '+(err?.message||err));
