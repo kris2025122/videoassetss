@@ -13,6 +13,15 @@
       font:12px/1.4 monospace;white-space:pre-wrap;z-index:10;border-bottom-right-radius:8px
     }
   </style>
+
+  <!-- Import map: mapea el bare specifier "three" a tu copia local -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three.module.js"
+    }
+  }
+  </script>
 </head>
 <body>
 <div id="log">Inicializando…</div>
@@ -30,28 +39,23 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
 
 (async()=>{
   try{
-    log("Cargando módulos…");
-    // Misma versión de THREE para todo
-    const THREE = await import("https://esm.sh/three@0.160.0");
-    // Bundle de gaussian-splats-3d; a veces exporta en default
-    const GSmod  = await import("https://esm.sh/@mkkellogg/gaussian-splats-3d@0.4.7?deps=three@0.160.0");
-    const GS     = GSmod.default ?? GSmod;
-
-    // Localiza la clase del loader con tolerancia a las variaciones de export
-    const SplatLoader =
-      (GS.GaussianSplatThreeJS && GS.GaussianSplatThreeJS.SplatLoader) ||
-      GS.SplatLoader ||
-      (GS.GaussianSplatThree && GS.GaussianSplatThree.SplatLoader);
-
-    if(!SplatLoader){
-      const keys = Object.keys(GS).join(", ");
-      throw new Error("SplatLoader no encontrado. Exports: "+keys);
-    }
+    log("Cargando módulos locales…");
+    // Usa tus copias locales (evita CORS/paths raros)
+    const THREE = await import("./lib/three.module.js");
+    const GS    = await import("./lib/gaussian-splats-3d.module.js");
 
     // Verifica que el archivo exista
     const head = await fetch(FILE, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+
+    // Encuentra el loader (distintas builds exponen nombres levemente distintos)
+    const ns = GS.GaussianSplatThreeJS || GS.default?.GaussianSplatThreeJS || GS;
+    const SplatLoader = ns?.SplatLoader || GS?.SplatLoader;
+    if(!SplatLoader){
+      log("EXPORTS GS: "+Object.keys(GS).join(", "));
+      throw new Error("SplatLoader no encontrado en la librería.");
+    }
 
     // Escena
     const scene    = new THREE.Scene();
@@ -90,7 +94,7 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, dist)));
     camera.lookAt(center);
 
-    // Control orbital simple (mouse) + zoom con rueda
+    // Orbit simple (drag) + zoom con rueda
     let rotating=false, lastX=0, lastY=0, az=0, el=0;
     function setCam(){
       const x = dist*Math.cos(el)*Math.sin(az);
