@@ -1,0 +1,39 @@
+<!doctype html><html lang="es"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>GS Viewer</title>
+<style>html,body{margin:0;height:100%}canvas{display:block;width:100%;height:100%}
+#log{position:fixed;left:0;top:0;max-width:70%;background:rgba(0,0,0,.6);color:#fff;
+font:12px/1.4 monospace;padding:8px;z-index:10;white-space:pre-wrap}</style></head>
+<body><div id="log">Inicializando…</div>
+<script type="module">
+const log=m=>{const el=document.getElementById('log');el.textContent+='\n'+m;console.log(m);};
+try{
+  const THREE = await import('https://unpkg.com/three@0.160.0/build/three.module.js');
+  const { VRButton } = await import('https://unpkg.com/three@0.160.0/examples/jsm/webxr/VRButton.js');
+  const { GaussianSplatThreeJS } = await import('https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d/dist/gaussian-splats-3d.module.js');
+
+  const scene=new THREE.Scene();
+  const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.01,2000);
+  camera.position.set(0,0,3);
+  const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);
+  renderer.xr.enabled=true;document.body.appendChild(renderer.domElement);document.body.appendChild(VRButton.createButton(renderer));
+  addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+  const p=new URLSearchParams(location.search);
+  // ⚠️ Como tu KSPLAT está en la RAÍZ del repo, no pongas "assets/". Deja solo el nombre.
+  const src=p.get('src')||'TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat';
+  log('Cargando: '+src);
+
+  const head=await fetch(src,{method:'HEAD'}); log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+  if(!head.ok) throw new Error('No se puede acceder al archivo: '+src);
+
+  const loader=new GaussianSplatThreeJS.SplatLoader();
+  const t0=performance.now();
+  const splat=await loader.load(src,(pr)=>{if(pr&&pr.total)log(`Progreso: ${Math.round(100*pr.loaded/pr.total)}%`);});
+  log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
+
+  splat.frustumCulled=false; scene.add(splat);
+  renderer.setAnimationLoop(()=>renderer.render(scene,camera));
+  log('Listo. Pulsa "Enter VR" en Quest 3.');
+}catch(e){console.error(e);document.getElementById('log').textContent+='\nERROR: '+(e?.message||e);}
+</script></body></html>
