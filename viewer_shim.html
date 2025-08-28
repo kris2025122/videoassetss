@@ -3,17 +3,15 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (rotado 180°)</title>
+  <title>GS Viewer (shim + Viewer oficial)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
   </style>
 
-  <!-- Shims para import maps -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 
-  <!-- Import map: three + GS3D (ESM) -->
   <script type="importmap-shim">
   {
     "imports": {
@@ -30,7 +28,6 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Tu KSPLAT en la raíz
 const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 
 addEventListener('error', e=> log('ERROR(win): '+e.message));
@@ -61,21 +58,13 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       logLevel: GS.LogLevel?.Info ?? 1
     });
 
-    // CARGA + ROTACIÓN 180° (eje X)
-    const node = await viewer.addSplatScene(FILE, {
+    await viewer.addSplatScene(FILE, {
       format: GS.SceneFormat.KSplat,
       showLoadingUI: true
     });
 
-    // 'addSplatScene' puede devolver el mesh directamente o un contenedor con .scene
-    const obj = node?.scene ?? node;
-    if (obj && obj.rotation) {
-      obj.rotation.x = Math.PI;           // gira 180° en X
-      obj.updateMatrixWorld?.(true);
-    }
-
     viewer.start();
-    log('Listo. Si queda de lado, prueba Y o Z en lugar de X.');
+    log('Listo. Deberías ver el modelo (en Quest 3 abre esta misma URL).');
   }catch(err){
     log('ERROR: '+(err?.message||err));
   }
