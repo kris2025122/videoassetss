@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (shim + import maps)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    canvas{display:block;width:100vw;height:100vh}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
+
+  <!-- Es-module-shims: hace que el import map funcione 100% consistente -->
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+
+  <!-- Import map: resuelve 'three', sus /examples, y el módulo GS3D -->
+  <script type="importmap-shim">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module-shim">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+// Tu KSPLAT en la raíz del repo:
+const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+// Captura errores visibles
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log("Cargando módulos (shim)...");
+    const THREE = await import('three');
+    const { GaussianSplatThreeJS } = await import('@mkkellogg/gaussian-splats-3d');
+
+    if(!GaussianSplatThreeJS?.SplatLoader){
+      const gs = await import('@mkkellogg/gaussian-splats-3d');
+      log('Exports GS3D: '+Object.keys(gs).join(', '));
+      throw new Error('No se encontró SplatLoader en GaussianSplatThreeJS.');
+    }
+
+    // HEAD para confirmar el asset
+    const head = await fetch(FILE, { method:'HEAD' });
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+
+    // Escena básica
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    renderer.setPixelRatio(Math.min(devicePixelRatio||1, 1.75));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Carga KSPLAT con loader oficial
+    log("Cargando KSPLAT…");
+    const loader = new GaussianSplatThreeJS.SplatLoader();
+    const t0 = performance.now();
+    const splat = await loader.load(FILE, (p)=>{
+      if(p && p.total){
+        const pct = Math.round(100*p.loaded/p.total);
+        if (pct % 10 === 0) log(`Progreso: ${pct}%`);
+      }
+    });
+    log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
+    splat.frustumCulled=false;
+    scene.add(splat);
+
+    // Encuadre automático
+    const box = new THREE.Box3().setFromObject(splat);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(1e-6, size.length()*0.5);
+    let dist = radius*1.6;
+
+    camera.near = Math.max(0.01, radius/1000);
+    camera.far  = Math.max(2000, radius*10);
+    camera.updateProjectionMatrix();
+    camera.position.copy(center.clone().add(new THREE.Vector3(0,0,dist)));
+    camera.lookAt(center);
+
+    // Órbita simple + zoom
+    let rot=false, lx=0, ly=0, az=0, el=0;
+    function setCam(){
+      const x=dist*Math.cos(el)*Math.sin(az);
+      const y=dist*Math.sin(el);
+      const z=dist*Math.cos(el)*Math.cos(az);
+      camera.position.set(center.x+x, center.y+y, center.z+z);
+      camera.lookAt(center);
+    }
+    addEventListener('mousedown', e=>{ rot=true; lx=e.clientX; ly=e.clientY; });
+    addEventListener('mouseup',   ()=> rot=false);
+    addEventListener('mousemove', e=>{
+      if(!rot) return;
+      const dx=(e.clientX-lx)/innerWidth, dy=(e.clientY-ly)/innerHeight;
+      lx=e.clientX; ly=e.clientY;
+      az += dx*Math.PI;
+      el = Math.max(-Math.PI/2+0.01, Math.min(Math.PI/2-0.01, el+dy*Math.PI));
+      setCam();
+    });
+    addEventListener('wheel', e=>{
+      e.preventDefault();
+      const f = (e.deltaY>0?1.1:0.9);
+      dist = Math.max(radius*0.3, Math.min(radius*50, dist*f));
+      setCam();
+    }, {passive:false});
+
+    // Resize y render
+    addEventListener('resize', ()=>{
+      camera.aspect=innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+    (function loop(){ renderer.render(scene, camera); requestAnimationFrame(loop); })();
+
+    log("Listo. Arrastra para orbitar y usa la rueda para acercarte.");
+  }catch(err){
+    log("ERROR: "+(err?.message||err));
+  }
+})();
+</script>
+</body>
+</html>
