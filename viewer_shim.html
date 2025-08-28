@@ -3,14 +3,17 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (rotado + centrado + VR)</title>
+  <title>GS Viewer (rotado + centrado + VR + fix timing)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
   </style>
 
+  <!-- Shims para import maps -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+
+  <!-- Import map: three + GS3D (ESM) -->
   <script type="importmap-shim">
   {
     "imports": {
@@ -27,11 +30,13 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
+// === TU KSPLAT ===
 const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 
-// Ajustes rápidos
-const ROTATE = { x: Math.PI, y: 0, z: 0 };  // 180° en X (cámbialo si lo quieres en Y/Z)
-const DIST_MULT = 1.35;                     // 1.2–2.0 (más chico = más cerca)
+// === ajustes rápidos ===
+const ROTATE = { x: Math.PI, y: 0, z: 0 }; // 180° en X (cambia eje si hiciera falta)
+const DIST_MULT = 1.35;                    // 1.2 más cerca, 1.7 más lejos
+const FIND_TIMEOUT_MS = 15000;             // espera hasta 15 s a que aparezca el mesh
 
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
@@ -51,10 +56,10 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
 
-    // Botón VR visible (Inline); en Quest 3 podrás entrar a VR
+    // Viewer con botón VR visible
     const viewer = new GS.Viewer({
       webXRMode: GS.WebXRMode?.Inline ?? 1,
-      sharedMemoryForWorkers: false, // Pages no es COOP/COEP
+      sharedMemoryForWorkers: false,
       gpuAcceleratedSort: false,
       useBuiltInControls: true,
       ignoreDevicePixelRatio: true,
@@ -62,42 +67,45 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       logLevel: GS.LogLevel?.Info ?? 1
     });
 
-    // Carga la escena KSplat
+    // ↓↓↓ Mitigar crasheo en Quest: baja la resolución interna
+    viewer.renderer?.setPixelRatio?.(1.0);
+
+    // Cargar la escena KSplat
     await viewer.addSplatScene(FILE, {
       format: GS.SceneFormat.KSplat,
       showLoadingUI: true
     });
 
-    // ===== Localiza el objeto splat dentro del árbol Three.js =====
-    const roots = [
-      viewer.scene, viewer._scene,
-      viewer.renderer?.scene, viewer.renderer?._scene,
-      viewer.threeScene, viewer._threeScene,
-      viewer.stage?.scene, viewer.stage?._scene,
-    ].filter(Boolean);
+    // Espera activa a que el objeto esté realmente en el grafo
+    async function waitForSplat(){
+      const roots = [
+        viewer.scene, viewer._scene,
+        viewer.renderer?.scene, viewer.renderer?._scene,
+        viewer.threeScene, viewer._threeScene,
+        viewer.stage?.scene, viewer.stage?._scene
+      ].filter(Boolean);
 
-    const found = [];
-    const scan = (root)=>{
-      try{
-        root.traverse?.(o=>{
-          const name = (o.name||'') + ' ' + (o.type||'');
-          if (
-            /splat/i.test(name) ||
-            o.isPoints || o.isMesh ||
-            (o.material && (o.material.sizeAttenuation!==undefined))
-          ){
-            found.push(o);
-          }
-        });
-      }catch(_){}
-    };
-    roots.forEach(scan);
+      const isSplatLike = (o)=>{
+        const name = (o.name||'') + ' ' + (o.type||'');
+        return /splat/i.test(name) || o.isPoints || (o.material && o.material.sizeAttenuation!==undefined);
+      };
 
-    let obj = found.sort((a,b)=>(b.children?.length||0)-(a.children?.length||0))[0] || roots[0];
-    if(!obj) throw new Error('No se encontró el objeto splat en la escena.');
+      const t0 = performance.now();
+      while (performance.now()-t0 < FIND_TIMEOUT_MS) {
+        for (const r of roots) {
+          let found = null;
+          r.traverse?.(o=>{ if(!found && isSplatLike(o)) found = o; });
+          if (found) return found;
+        }
+        await new Promise(r=>setTimeout(r, 120));
+      }
+      return null;
+    }
 
-    // ===== Centrado + Rotación =====
-    // centra el modelo en el origen
+    const obj = await waitForSplat();
+    if(!obj) throw new Error('No se obtuvo el objeto de la escena (timeout).');
+
+    // === centrar y rotar ===
     const box = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
@@ -107,14 +115,13 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     obj.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);
     obj.updateMatrixWorld(true);
 
-    // ===== Cámara / Controles =====
+    // === acercar cámara ===
     const cam =
       viewer.camera || viewer._camera || viewer.renderer?.camera || null;
     const controls =
       viewer.controls || viewer._controls || viewer.orbitControls || viewer._orbitControls || null;
 
     const dist = radius * DIST_MULT;
-
     if (cam && cam.position && cam.lookAt) {
       cam.near = Math.max(0.01, radius/1000);
       cam.far  = Math.max(2000, radius*10);
@@ -128,8 +135,7 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     }
 
     viewer.start();
-    log('Listo. Rotado 180°, centrado y cámara cerca. Botón VR activo (Inline).');
-
+    log('Listo. Rotado 180°, centrado y cámara cerca. Botón VR activo.');
   }catch(err){
     log('ERROR: '+(err?.message||err));
   }
