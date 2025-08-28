@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (final)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
+
+  <!-- Shims para que el import map funcione igual en todos -->
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+
+  <!-- Import map: three + paquete GS3D (build ESM) -->
+  <script type="importmap-shim">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module-shim">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+// Tu archivo en la raíz del repo:
+const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log('Cargando módulos (shim)…');
+    await import('three');
+    const GS = await import('@mkkellogg/gaussian-splats-3d');
+
+    if(!GS.Viewer || !GS.SceneFormat){
+      log('Exports GS3D: '+Object.keys(GS).join(', '));
+      throw new Error('El paquete no expone Viewer/SceneFormat (estás viendo una versión cacheada).');
+    }
+
+    const head = await fetch(FILE, {method:'HEAD'});
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+
+    // Viewer oficial, sin SharedArrayBuffer (Pages) ni WebXR (para desktop)
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.None ?? 0,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: false,
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
+    });
+
+    await viewer.addSplatScene(FILE, {
+      format: GS.SceneFormat.KSplat,
+      showLoadingUI: true
+    });
+
+    viewer.start();
+    log('Listo. Deberías ver el modelo y su UI. En Quest 3 abre esta misma URL.');
+  }catch(err){
+    log('ERROR: '+(err?.message||err));
+  }
+})();
+</script>
+</body>
+</html>
