@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (Three.js + SplatLoader + VR)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    canvas{display:block;width:100vw;height:100vh}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
+
+  <!-- Shims para import maps -->
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+
+  <!-- Import map: three, examples y GS3D (ESM build) -->
+  <script type="importmap-shim">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module-shim">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+// === TU KSPLAT (usa el nombre EXACTO, respetando mayúsculas/minúsculas) ===
+const FILE = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+// Ajustes rápidos
+const ROTATE = { x: Math.PI, y: 0, z: 0 };  // 180° en X (cambia a Y/Z si hace falta)
+const DIST_MULT = 1.35;                      // 1.2–2.0 (más bajo = más cerca)
+const PIXEL_RATIO = 1.0;                     // reduce memoria (útil en Quest)
+
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log('Cargando módulos (shim)…');
+    const THREE = await import('three');
+    const { VRButton } = await import('three/examples/jsm/webxr/VRButton.js');
+    const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
+    const GS = await import('@mkkellogg/gaussian-splats-3d');
+
+    if(!GS.SplatLoader){
+      log('Exports GS3D: '+Object.keys(GS).join(', '));
+      throw new Error('SplatLoader no disponible en el paquete.');
+    }
+
+    const head = await fetch(FILE, { method:'HEAD' });
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+
+    // ----- Escena base -----
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    renderer.setPixelRatio(PIXEL_RATIO);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;                         // WebXR ON (botón VR)
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(VRButton.createButton(renderer));
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // ----- Carga KSPLAT -----
+    log('Cargando KSPLAT…');
+    const loader = new GS.SplatLoader();
+    const t0 = performance.now();
+    const splat = await loader.load(FILE, (p)=>{
+      if(p && p.total){
+        const pct = Math.round(100*p.loaded/p.total);
+        if (pct % 10 === 0) log(`Progreso: ${pct}%`);
+      }
+    });
+    log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
+
+    // ----- Centrado y rotación -----
+    const box = new THREE.Box3().setFromObject(splat);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const radius = Math.max(1e-6, size.length()*0.5);
+
+    splat.position.sub(center);                        // centrar en origen
+    splat.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);  // girar 180°
+    splat.updateMatrixWorld(true);
+    splat.frustumCulled = false;
+    scene.add(splat);
+
+    // ----- Cámara cerca mirando al centro -----
+    const dist = radius * DIST_MULT;
+    camera.near = Math.max(0.01, radius/1000);
+    camera.far  = Math.max(2000, radius*10);
+    camera.updateProjectionMatrix();
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    // Resize
+    addEventListener('resize', ()=>{
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // Render (desktop y VR)
+    renderer.setAnimationLoop(()=>{
+      controls.update();
+      renderer.render(scene, camera);
+    });
+
+    log('Listo. Modelo rotado y centrado. Botón VR activo (Quest 3).');
+  }catch(err){
+    log('ERROR: '+(err?.message||err));
+  }
+})();
+</script>
+</body>
+</html>
