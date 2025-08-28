@@ -3,13 +3,21 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (local ESM)</title>
+  <title>GS Viewer (KSPLAT fijo, local)</title>
   <style>
-    html,body{margin:0;height:100%;background:#000;overflow:hidden}
-    canvas{display:block;width:100vw;height:100vh}
+    html,body{margin:0;height:100%;background:#000}
     #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
   </style>
+
+  <!-- Import map: resuelve el bare specifier "three" a tu copia local -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three.module.js"
+    }
+  }
+  </script>
 </head>
 <body>
 <div id="log">Inicializando…</div>
@@ -18,106 +26,49 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// KSPLAT en la raíz del repo:
+// Tu KSPLAT en la raíz del repo:
 const FILE = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+// Errores visibles en pantalla
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
   try{
-    log("Importando módulos locales…");
-    // Import nominal directo desde tu carpeta /lib
-    import * as THREE from "./lib/three.module.js";
-    const threeNS = await import("./lib/three.module.js");            // namespace real
-    const gsNS    = await import("./lib/gaussian-splats-3d.module.js"); // módulo GS3D
+    log("Cargando módulos locales…");
+    // Forzamos la carga de THREE desde el import map
+    await import("three");
+    // Import del viewer desde tu copia local (build ESM)
+    const GSMOD = await import("./lib/gaussian-splats-3d.module.js");
+    const GS    = GSMOD?.default ?? GSMOD;
 
-    // Extraer SplatLoader de la export del módulo (forma nominal)
-    const GaussianSplatThreeJS = gsNS.GaussianSplatThreeJS ?? (gsNS.default?.GaussianSplatThreeJS);
-    if (!GaussianSplatThreeJS) {
-      $log.textContent += "\n[DEBUG] Exports GS: " + Object.keys(gsNS).join(", ");
-      throw new Error("No se encontró GaussianSplatThreeJS en el módulo local.");
-    }
-    const SplatLoader = GaussianSplatThreeJS.SplatLoader;
-    if (!SplatLoader) throw new Error("No se encontró SplatLoader.");
-
-    // HEAD para confirmar asset
+    // Verifica que el archivo exista (200 OK)
     const head = await fetch(FILE, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
 
-    // Escena
-    const scene    = new threeNS.Scene();
-    const camera   = new threeNS.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
-    const renderer = new threeNS.WebGLRenderer({ antialias:true, alpha:false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.75));
-    renderer.setSize(innerWidth, innerHeight);
-    document.body.appendChild(renderer.domElement);
-
-    // Carga KSPLAT
-    log("Cargando KSPLAT…");
-    const loader = new SplatLoader();
-    const t0 = performance.now();
-    const splat = await loader.load(FILE, (p)=>{
-      if(p && p.total){
-        const pct = Math.round(100*p.loaded/p.total);
-        if (pct % 10 === 0) log(`Progreso: ${pct}%`);
-      }
-    });
-    log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
-
-    // Añadir y encuadre
-    splat.frustumCulled = false;
-    scene.add(splat);
-
-    const box = new threeNS.Box3().setFromObject(splat);
-    const center = box.getCenter(new threeNS.Vector3());
-    const size = box.getSize(new threeNS.Vector3());
-    const radius = Math.max(1e-6, size.length() * 0.5);
-    let dist = radius * 1.6;
-
-    camera.near = Math.max(0.01, radius/1000);
-    camera.far  = Math.max(2000, radius*10);
-    camera.updateProjectionMatrix();
-
-    camera.position.copy(center.clone().add(new threeNS.Vector3(0, 0, dist)));
-    camera.lookAt(center);
-
-    // Órbita simple + zoom
-    let rotating=false, lastX=0, lastY=0, az=0, el=0;
-    function setCam(){
-      const x = dist*Math.cos(el)*Math.sin(az);
-      const y = dist*Math.sin(el);
-      const z = dist*Math.cos(el)*Math.cos(az);
-      camera.position.set(center.x+x, center.y+y, center.z+z);
-      camera.lookAt(center);
-    }
-    addEventListener('mousedown', e=>{ rotating=true; lastX=e.clientX; lastY=e.clientY; });
-    addEventListener('mouseup',   ()=> rotating=false);
-    addEventListener('mousemove', e=>{
-      if(!rotating) return;
-      const dx=(e.clientX-lastX)/innerWidth, dy=(e.clientY-lastY)/innerHeight;
-      lastX=e.clientX; lastY=e.clientY;
-      az += dx*Math.PI;
-      el = Math.max(-Math.PI/2+0.01, Math.min(Math.PI/2-0.01, el+dy*Math.PI));
-      setCam();
-    });
-    addEventListener('wheel', e=>{
-      e.preventDefault();
-      const factor = (e.deltaY>0? 1.1 : 0.9);
-      dist = Math.max(radius*0.3, Math.min(radius*50, dist*factor));
-      setCam();
-    }, {passive:false});
-
-    // Resize
-    addEventListener('resize', ()=>{
-      camera.aspect = innerWidth/innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(innerWidth, innerHeight);
+    // === Viewer oficial (según README) ===
+    // Sin WebXR (para Chrome), sin SharedArrayBuffer (Pages), y sin GPU sort
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.None ?? 0,
+      sharedMemoryForWorkers: false,   // recomendado en GitHub Pages
+      gpuAcceleratedSort: false,       // recomendado cuando lo anterior es false
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
     });
 
-    // Render
-    function tick(){ renderer.render(scene, camera); requestAnimationFrame(tick); }
-    setCam(); tick();
+    // Carga del KSPLAT (forzamos formato KSplat por si acaso)
+    await viewer.addSplatScene(FILE, {
+      format: GS.SceneFormat?.KSplat ?? 2,  // Ply=0, Splat=1, KSplat=2
+      showLoadingUI: true
+    });
 
-    log("Listo. Arrastra para orbitar y usa la rueda para acercarte.");
+    // Arranca el render del viewer
+    viewer.start();
+    log("Listo: debería verse ya en Chrome. Luego abre esta misma URL en Quest 3.");
+
   }catch(err){
     log("ERROR: "+(err?.message||err));
   }
