@@ -14,7 +14,7 @@
     }
   </style>
 
-  <!-- Import map: mapea el bare specifier "three" a tu copia local -->
+  <!-- Import map: mapea "three" a tu copia local -->
   <script type="importmap">
   {
     "imports": {
@@ -42,22 +42,50 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     log("Cargando módulos locales…");
     // Usa tus copias locales (evita CORS/paths raros)
     const THREE = await import("./lib/three.module.js");
-    const GS    = await import("./lib/gaussian-splats-3d.module.js");
+    const GSMOD = await import("./lib/gaussian-splats-3d.module.js");
+
+    // Normaliza namespace (algunas builds exportan en default)
+    const GS = GSMOD?.default ?? GSMOD;
+    const ns = GS.GaussianSplatThreeJS ?? GS.GaussianSplatThree ?? GS;
+
+    // ---- Localiza y usa el loader con tolerancia a variaciones ----
+    let LoaderClass =
+      ns?.SplatLoader || GS?.SplatLoader || GSMOD?.SplatLoader;
+
+    // Fallbacks de métodos (instancia/estático/async)
+    let loadFn = null;
+    let loaderInstance = null;
+
+    if (LoaderClass) {
+      try { loaderInstance = new LoaderClass(); } catch(e){ /* puede ser clase no constructible */ }
+      if (loaderInstance && typeof loaderInstance.load === 'function') {
+        loadFn = (url, onProg)=> loaderInstance.load(url, onProg);
+      } else if (loaderInstance && typeof loaderInstance.loadAsync === 'function') {
+        loadFn = (url, onProg)=> loaderInstance.loadAsync(url, onProg);
+      } else if (typeof LoaderClass.load === 'function') {
+        loadFn = (url, onProg)=> LoaderClass.load(url, onProg);
+      }
+    }
+
+    // Si aún no hay loader, intenta otras rutas usadas por algunas builds
+    if (!loadFn) {
+      const maybe = ns?.SplatLoader || ns?.loadSplat || GS?.loadSplat;
+      if (typeof maybe === 'function') {
+        loadFn = (url, onProg)=> maybe(url, onProg);
+      }
+    }
+
+    if (!loadFn) {
+      log("EXPORTS DISPONIBLES: "+Object.keys(GS).join(", "));
+      throw new Error("SplatLoader no encontrado en la librería (no expone load/loadAsync).");
+    }
 
     // Verifica que el archivo exista
     const head = await fetch(FILE, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
 
-    // Encuentra el loader (distintas builds exponen nombres levemente distintos)
-    const ns = GS.GaussianSplatThreeJS || GS.default?.GaussianSplatThreeJS || GS;
-    const SplatLoader = ns?.SplatLoader || GS?.SplatLoader;
-    if(!SplatLoader){
-      log("EXPORTS GS: "+Object.keys(GS).join(", "));
-      throw new Error("SplatLoader no encontrado en la librería.");
-    }
-
-    // Escena
+    // ---- Escena básica ----
     const scene    = new THREE.Scene();
     const camera   = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
@@ -65,19 +93,18 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     renderer.setSize(innerWidth, innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // Carga KSPLAT
+    // ---- Carga KSPLAT con progreso ----
     log("Cargando KSPLAT…");
-    const loader = new SplatLoader();
     const t0 = performance.now();
-    const splat = await loader.load(FILE, (p)=>{
+    const splat = await loadFn(FILE, (p)=>{
       if(p && p.total){
         const pct = Math.round(100*p.loaded/p.total);
-        if(pct % 10 === 0) log(`Progreso: ${pct}%`);
+        if (pct % 10 === 0) log(`Progreso: ${pct}%`);
       }
     });
     log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
 
-    // Añadir y encuadrar
+    // ---- Añadir y encuadre ----
     splat.frustumCulled = false;
     scene.add(splat);
 
@@ -94,7 +121,7 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, dist)));
     camera.lookAt(center);
 
-    // Orbit simple (drag) + zoom con rueda
+    // Órbita simple + zoom con rueda
     let rotating=false, lastX=0, lastY=0, az=0, el=0;
     function setCam(){
       const x = dist*Math.cos(el)*Math.sin(az);
