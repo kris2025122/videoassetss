@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (KSPLAT fijo, local)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
+
+  <!-- Import map: resuelve el bare specifier "three" a tu copia local -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+// Tu KSPLAT en la raíz del repo:
+const FILE = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+// Errores visibles en pantalla
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log("Cargando módulos locales…");
+    // Forzamos la carga de THREE desde el import map
+    await import("three");
+    // Import del viewer desde tu copia local (build ESM)
+    const GSMOD = await import("./lib/gaussian-splats-3d.module.js");
+    const GS    = GSMOD?.default ?? GSMOD;
+
+    // Verifica que el archivo exista (200 OK)
+    const head = await fetch(FILE, { method:'HEAD' });
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+
+    // === Viewer oficial (según README) ===
+    // Sin WebXR (para Chrome), sin SharedArrayBuffer (Pages), y sin GPU sort
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.None ?? 0,
+      sharedMemoryForWorkers: false,   // recomendado en GitHub Pages
+      gpuAcceleratedSort: false,       // recomendado cuando lo anterior es false
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
+    });
+
+    // Carga del KSPLAT (forzamos formato KSplat por si acaso)
+    await viewer.addSplatScene(FILE, {
+      format: GS.SceneFormat?.KSplat ?? 2,  // Ply=0, Splat=1, KSplat=2
+      showLoadingUI: true
+    });
+
+    // Arranca el render del viewer
+    viewer.start();
+    log("Listo: debería verse ya en Chrome. Luego abre esta misma URL en Quest 3.");
+
+  }catch(err){
+    log("ERROR: "+(err?.message||err));
+  }
+})();
+</script>
+</body>
+</html>
