@@ -18,42 +18,45 @@
 
 <script type="module">
 const $log=document.getElementById('log');
-const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+const log=(m)=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Tu archivo en la RAÍZ del repo (ya confirmaste que descarga):
+// Tu KSPLAT en la RAÍZ del repo (ya comprobaste que descarga):
 const FILE_PATH = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+// Mostrar cualquier error global en el log
+window.addEventListener('error', e=> log('ERROR(win): '+e.message));
+window.addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
   try{
     log("Cargando librería…");
-    // Importa el módulo desde jsDelivr usando la ruta correcta /build/
-    const GaussianSplats3D = await import(
-      "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
-    );
+    // Import desde CDN (ruta correcta: /build/)
+    const GS = await import("https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js");
 
-    // Verifica que el archivo exista en Pages
+    // Verifica que el archivo exista en Pages (debe dar 200)
     const head = await fetch(FILE_PATH, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE_PATH);
 
-    // Crea el viewer integrado (sin WebXR y sin SharedArrayBuffer para GitHub Pages)
-    const viewer = new GaussianSplats3D.Viewer({
-      webXRMode: GaussianSplats3D.WebXRMode.None,
-      sharedMemoryForWorkers: false,  // evita requerir COOP/COEP en Pages
-      gpuAcceleratedSort: true,       // puedes poner false si el PC es muy justo
+    // Viewer integrado SIN WebXR ni SharedArrayBuffer (compatible con GitHub Pages)
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode.None,
+      sharedMemoryForWorkers: false, // COOP/COEP no requerido en Pages
+      gpuAcceleratedSort: false,     // RECOMENDADO cuando sharedMemoryForWorkers=false
       useBuiltInControls: true,
-      ignoreDevicePixelRatio: true,   // más estable en portátiles/Quest
-      antialiased: true
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel.Info
     });
 
-    // Añade tu escena KSPLAT y arranca
+    // Carga del KSPLAT (no toco splatAlphaRemovalThreshold: por defecto 1/255)
     await viewer.addSplatScene(FILE_PATH, {
-      showLoadingUI: true,
-      splatAlphaRemovalThreshold: 1    // respeta casi todo (ya comprimiste con alpha alto)
+      showLoadingUI: true
     });
 
+    // Arranca el render
     viewer.start();
-    log("Listo. Deberías ver el KSPLAT en Chrome. (En Quest: abre esta misma URL y pulsa Enter VR en el UI del viewer).");
+    log("Listo: debería verse en Chrome. En Quest 3 también funciona esta misma URL.");
   }catch(err){
     log("ERROR: "+(err?.message||err));
   }
