@@ -1,109 +1,74 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GS Viewer (Quest 3 • VR)</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (shim + Viewer oficial)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
 
-  <!-- Three.js + helpers -->
-  <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.161.0/build/three.module.js';
-    import { OrbitControls } from 'https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js';
-    import { VRButton } from 'https://unpkg.com/three@0.161.0/examples/jsm/webxr/VRButton.js';
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 
-    /* 
-      CARGADOR KSPLAT / SPLAT
-      Usaremos el loader del viewer de Kellogg expuesto como módulo simple.
-      Si tu archivo es .ksplat o .splat, pásalo por ?src=archivo.ksplat en la URL
-      Ejemplo: https://TUUSUARIO.github.io/videoassetss/viewer_shim.html?src=HARAKBUTvrhm.ksplat
-    */
-    import { KTXSplatLoader } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/KTXSplatLoader.js';
-    import { SplatLoader }     from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/SplatLoader.js';
-
-    const urlParams = new URLSearchParams(location.search);
-    const SRC = urlParams.get('src') || 'HARAKBUTvrhm.ksplat'; // cámbialo si quieres un default distinto
-
-    // Escena básica
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.xr.enabled = true; // <- habilita WebXR
-    document.body.style.margin = '0';
-    document.body.appendChild(renderer.domElement);
-    document.body.appendChild(VRButton.createButton(renderer)); // <- botón VR
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
-    camera.position.set(0, 0, 3.0); // centrado frente al modelo
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0, 0, 0);
-
-    // Luz suave para tener referencia (los splats no siempre la usan, pero ayuda a la UI)
-    const light = new THREE.AmbientLight(0xffffff, 1.0);
-    scene.add(light);
-
-    // Contenedor del splat
-    const splatGroup = new THREE.Group();
-    scene.add(splatGroup);
-
-    // --- CARGA DEL ARCHIVO (.ksplat o .splat) ---
-    async function loadSplat(src) {
-      const lower = src.toLowerCase();
-      let obj;
-
-      if (lower.endsWith('.ksplat') || lower.endsWith('.ktx2') || lower.endsWith('.ktxsplat')) {
-        const loader = new KTXSplatLoader();
-        obj = await loader.loadAsync(src);
-      } else if (lower.endsWith('.splat')) {
-        const loader = new SplatLoader();
-        obj = await loader.loadAsync(src);
-      } else {
-        alert('Formato no soportado. Usa .ksplat o .splat (o pasa ?src=archivo.ksplat en la URL).');
-        return;
-      }
-
-      // Limpia anteriores y agrega el nuevo
-      splatGroup.clear();
-      splatGroup.add(obj);
-
-      // --- Deja el modelo "al revés" (rotación 180° en X) como pediste ---
-      // (si en tu caso era Z, cambia a .rotation.z = Math.PI)
-      obj.rotation.x = Math.PI;
-
-      // --- Centrado de cámara: encuadre automático al bounding sphere ---
-      const box = new THREE.Box3().setFromObject(obj);
-      const sphere = box.getBoundingSphere(new THREE.Sphere());
-
-      // Re-centra el objeto al origen para que la cámara apunte al centro real
-      obj.position.sub(sphere.center);
-
-      // Coloca cámara a una distancia adecuada y apunta al centro
-      const dist = Math.max(2.5, sphere.radius * 2.25);
-      camera.position.set(0, 0, dist);
-      controls.target.set(0, 0, 0);
-      controls.update();
+  <script type="importmap-shim">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
     }
-
-    // Llama a la carga
-    loadSplat(SRC);
-
-    // Resize
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    // Render loop + soporte VR
-    renderer.setAnimationLoop(() => {
-      controls.update();
-      renderer.render(scene, camera);
-    });
+  }
   </script>
 </head>
-<body></body>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module-shim">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log('Cargando módulos (shim)…');
+    await import('three');
+    const GS = await import('@mkkellogg/gaussian-splats-3d');
+
+    if(!(GS.Viewer && GS.SceneFormat)){
+      log('Exports GS3D: '+Object.keys(GS).join(', '));
+      throw new Error('El paquete no expone Viewer/SceneFormat.');
+    }
+
+    const head = await fetch(FILE, {method:'HEAD'});
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.None ?? 0,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: false,
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
+    });
+
+    await viewer.addSplatScene(FILE, {
+      format: GS.SceneFormat.KSplat,
+      showLoadingUI: true
+    });
+
+    viewer.start();
+    log('Listo. Deberías ver el modelo (en Quest 3 abre esta misma URL).');
+  }catch(err){
+    log('ERROR: '+(err?.message||err));
+  }
+})();
+</script>
+</body>
 </html>
