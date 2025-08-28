@@ -10,10 +10,8 @@
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
   </style>
 
-  <!-- Garantiza import maps consistentes en todos los navegadores -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 
-  <!-- Import map: resuelve 'three' y el módulo GS3D -->
   <script type="importmap-shim">
   {
     "imports": {
@@ -30,55 +28,44 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Tu KSPLAT en la raíz del repo:
-const FILE = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+const FILE="TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 
-// Muestra errores en pantalla
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
   try{
-    log("Cargando módulos (shim)...");
-    // Importa THREE (necesario para el viewer)
+    log('Cargando módulos (shim)…');
     await import('three');
-    // Importa el paquete: ¡usa exports top-level!
     const GS = await import('@mkkellogg/gaussian-splats-3d');
 
-    // Chequeo rápido de exports disponibles (útil para depurar)
     if(!(GS.Viewer && GS.SceneFormat)){
       log('Exports GS3D: '+Object.keys(GS).join(', '));
       throw new Error('El paquete no expone Viewer/SceneFormat.');
     }
 
-    // Confirma que el archivo existe en Pages
-    const head = await fetch(FILE, { method:'HEAD' });
+    const head = await fetch(FILE, {method:'HEAD'});
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+FILE);
 
-    // === Viewer oficial ===
     const viewer = new GS.Viewer({
-      webXRMode: GS.WebXRMode?.None ?? 0,   // primero prueba en desktop
-      sharedMemoryForWorkers: false,        // GitHub Pages no usa COOP/COEP
-      gpuAcceleratedSort: false,            // recomendado cuando lo anterior es false
+      webXRMode: GS.WebXRMode?.None ?? 0,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: false,
       useBuiltInControls: true,
       ignoreDevicePixelRatio: true,
       antialiased: true,
       logLevel: GS.LogLevel?.Info ?? 1
     });
 
-    // Carga explícita como KSplat
     await viewer.addSplatScene(FILE, {
-      format: GS.SceneFormat?.KSplat ?? 2,  // Ply=0, Splat=1, KSplat=2
+      format: GS.SceneFormat.KSplat,
       showLoadingUI: true
     });
 
     viewer.start();
-    log("Listo. Deberías ver el modelo. (En Quest 3 abre esta misma URL).");
+    log('Listo. Deberías ver el modelo (en Quest 3 abre esta misma URL).');
   }catch(err){
-    log("ERROR: "+(err?.message||err));
+    log('ERROR: '+(err?.message||err));
   }
-})();
-</script>
-</body>
-</html>
+}
