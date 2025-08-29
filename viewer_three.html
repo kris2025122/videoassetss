@@ -8,7 +8,7 @@
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     canvas{display:block;width:100vw;height:100vh}
     #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
-         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:9999}
   </style>
 
   <!-- Shims para import maps -->
@@ -32,20 +32,25 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// === TU KSPLAT (usa el nombre EXACTO, respetando mayúsculas/minúsculas) ===
-const FILE = "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+// --- Parámetros por URL opcionales: ?src=...&rot=x180|y180|z180&dist=1.35&px=1.0
+const q = new URLSearchParams(location.search);
+const SRC  = q.get('src')  || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+const ROTQ = (q.get('rot') || "x180").toLowerCase();
+const DIST = parseFloat(q.get('dist') || "1.35");
+const PR   = parseFloat(q.get('px')   || "1.0");
 
-// Ajustes rápidos
-const ROTATE = { x: Math.PI, y: 0, z: 0 };  // 180° en X (cambia a Y/Z si hace falta)
-const DIST_MULT = 1.35;                      // 1.2–2.0 (más bajo = más cerca)
-const PIXEL_RATIO = 1.0;                     // reduce memoria (útil en Quest)
+// Decodifica rotación
+const ROTATE = {x:0,y:0,z:0};
+if (ROTQ==="x180") ROTATE.x=Math.PI;
+if (ROTQ==="y180") ROTATE.y=Math.PI;
+if (ROTQ==="z180") ROTATE.z=Math.PI;
 
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
   try{
-    log('Cargando módulos (shim)…');
+    log('Cargando módulos…');
     const THREE = await import('three');
     const { VRButton } = await import('three/examples/jsm/webxr/VRButton.js');
     const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
@@ -53,20 +58,20 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
 
     if(!GS.SplatLoader){
       log('Exports GS3D: '+Object.keys(GS).join(', '));
-      throw new Error('SplatLoader no disponible en el paquete.');
+      throw new Error('SplatLoader no disponible.');
     }
 
-    const head = await fetch(FILE, { method:'HEAD' });
+    const head = await fetch(SRC, { method:'HEAD' });
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
-    if(!head.ok) throw new Error('No se puede acceder a '+FILE);
+    if(!head.ok) throw new Error('No se puede acceder a '+SRC);
 
     // ----- Escena base -----
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
-    renderer.setPixelRatio(PIXEL_RATIO);
+    renderer.setPixelRatio(PR);                // más bajo = menos memoria (Quest)
     renderer.setSize(innerWidth, innerHeight);
-    renderer.xr.enabled = true;                         // WebXR ON (botón VR)
+    renderer.xr.enabled = true;                // WebXR ON
     document.body.appendChild(renderer.domElement);
     document.body.appendChild(VRButton.createButton(renderer));
 
@@ -77,7 +82,7 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     log('Cargando KSPLAT…');
     const loader = new GS.SplatLoader();
     const t0 = performance.now();
-    const splat = await loader.load(FILE, (p)=>{
+    const splat = await loader.load(SRC, (p)=>{
       if(p && p.total){
         const pct = Math.round(100*p.loaded/p.total);
         if (pct % 10 === 0) log(`Progreso: ${pct}%`);
@@ -85,20 +90,20 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     });
     log(`Cargado en ${Math.round(performance.now()-t0)} ms`);
 
-    // ----- Centrado y rotación -----
+    // ----- Centrar y rotar -----
     const box = new THREE.Box3().setFromObject(splat);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
     const radius = Math.max(1e-6, size.length()*0.5);
 
-    splat.position.sub(center);                        // centrar en origen
-    splat.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);  // girar 180°
+    splat.position.sub(center);                        // centrar
+    splat.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);  // 180° eje elegido
     splat.updateMatrixWorld(true);
     splat.frustumCulled = false;
     scene.add(splat);
 
     // ----- Cámara cerca mirando al centro -----
-    const dist = radius * DIST_MULT;
+    const dist = radius * DIST;
     camera.near = Math.max(0.01, radius/1000);
     camera.far  = Math.max(2000, radius*10);
     camera.updateProjectionMatrix();
@@ -107,14 +112,12 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     controls.target.set(0, 0, 0);
     controls.update();
 
-    // Resize
     addEventListener('resize', ()=>{
       camera.aspect = innerWidth/innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // Render (desktop y VR)
     renderer.setAnimationLoop(()=>{
       controls.update();
       renderer.render(scene, camera);
