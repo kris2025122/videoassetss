@@ -2,124 +2,78 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>Stable GS Viewer (con diagnóstico)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stable GS Viewer</title>
   <style>
-    html,body{margin:0;height:100%;background:#000}
-    #log{position:fixed;left:0;right:0;top:0;color:#0f0;background:rgba(0,0,0,.6);font:12px/1.4 monospace;padding:8px;max-height:40vh;overflow:auto;white-space:pre-wrap}
+    body { margin: 0; background: #000; }
+    canvas { display: block; }
   </style>
 </head>
 <body>
-<div id="log">Iniciando…</div>
 <script type="module">
-  const logEl = document.getElementById('log');
-  const log = (...a)=>{ const s=a.map(x=>typeof x==='object'?JSON.stringify(x):String(x)).join(' '); logEl.textContent += "\n"+s; console.log(...a); };
-
-  // Versiones conservadoras (las que ya te funcionaban)
   import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
   import { OrbitControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js';
-
-  // Loaders Kellogg (pin a main; si fallan, verás el 404 aquí)
   import { KTXSplatLoader } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/KTXSplatLoader.js';
-  import { SplatLoader    } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/SplatLoader.js';
+  import { SplatLoader } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/SplatLoader.js';
 
-  const q   = new URLSearchParams(location.search);
-  const SRC = q.get('src') || 'HARAKBUTvrhm.ksplat'; // AJUSTA si tu nombre es distinto
-  const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
+  const q = new URLSearchParams(location.search);
+  const SRC = q.get('src') || 'TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat';
 
-  // Renderer
-  const renderer = new THREE.WebGLRenderer({
-    antialias: !isQuest,
-    alpha: false,
-    powerPreference: 'high-performance'
-  });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(isQuest ? 1 : Math.min(devicePixelRatio, 2));
-  renderer.debug.checkShaderErrors = true;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
 
-  // Escena y cámara
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 2000);
-  camera.position.set(0,0,3);
+  const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
+  camera.position.set(0, 0, 3);
+
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
+  controls.target.set(0, 0, 0);
+  controls.update();
 
-  const root = new THREE.Group();
-  scene.add(root);
+  const group = new THREE.Group();
+  scene.add(group);
 
-  // 1) Comprobación rápida: que el archivo EXISTA y pese <100MB en GitHub Pages
-  async function headCheck(url){
-    try{
-      const r = await fetch(url, { method:'HEAD', cache:'no-store' });
-      log('HEAD', url, r.status, r.ok ? 'OK' : 'FAIL');
-      if(!r.ok) throw new Error('No encontrado (404) o bloqueado.');
-      const len = r.headers.get('content-length');
-      if(len){ 
-        const n = Number(len);
-        log('Tamaño:', n, 'bytes');
-        if(n >= 100_000_000) log('⚠ Archivo >=100MB: GitHub puede NO subirlo o Quest no cargarlo.');
-      }
-    }catch(e){
-      log('❌ HEAD error:', e.message);
-      throw e;
+  async function loadSplat(src) {
+    let obj;
+    const lower = src.toLowerCase();
+    if (lower.endsWith('.ksplat') || lower.endsWith('.ktx2')) {
+      const loader = new KTXSplatLoader();
+      obj = await loader.loadAsync(src);
+    } else if (lower.endsWith('.splat')) {
+      const loader = new SplatLoader();
+      obj = await loader.loadAsync(src);
+    } else {
+      alert("Usa un archivo .ksplat o .splat");
+      return;
     }
+
+    group.clear();
+    group.add(obj);
+
+    // Rotación 180° para mantenerlo “al revés”, como la versión que viste
+    obj.rotation.x = Math.PI;
+
+    // Centrado y encuadre
+    const box = new THREE.Box3().setFromObject(obj);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    obj.position.sub(sphere.center);
+    const dist = Math.max(2.5, sphere.radius * 2.4);
+    camera.position.set(0, 0, dist);
+    controls.target.set(0, 0, 0);
+    controls.update();
   }
 
-  // 2) Carga del splat
-  async function loadSplat(url){
-    try{
-      await headCheck(url); // muestra 404/tamaño aquí
-      let obj;
-      const s = url.toLowerCase();
-      if (s.endsWith('.ksplat') || s.endsWith('.ktx2') || s.endsWith('.ktxsplat')){
-        const loader = new KTXSplatLoader();
-        obj = await loader.loadAsync(url);
-      } else if (s.endsWith('.splat')) {
-        const loader = new SplatLoader();
-        obj = await loader.loadAsync(url);
-      } else {
-        throw new Error('Usa .ksplat o .splat. URL actual: '+url);
-      }
+  loadSplat(SRC);
 
-      // Limpia y añade
-      root.clear();
-      root.add(obj);
-
-      // Rotación 180° (deja “al revés” como pediste)
-      obj.rotation.x = Math.PI;
-
-      // Centrado y encuadre
-      const box = new THREE.Box3().setFromObject(obj);
-      const sphere = box.getBoundingSphere(new THREE.Sphere());
-      obj.position.sub(sphere.center);
-      const dist = Math.max(2.5, sphere.radius * 2.4);
-      camera.position.set(0,0,dist);
-      controls.target.set(0,0,0);
-      controls.update();
-
-      log('✅ Cargado:', url);
-    }catch(e){
-      log('❌ Error al cargar:', e && e.message ? e.message : e);
-      // Fallback: muestra un cubo para confirmar que el render funciona
-      const g = new THREE.BoxGeometry(1,1,1);
-      const m = new THREE.MeshBasicMaterial({ wireframe:true });
-      const cube = new THREE.Mesh(g,m);
-      root.clear();
-      root.add(cube);
-      log('🧪 Fallback: cubo de prueba visible = render OK; el problema es el archivo/URL.');
-    }
-  }
-
-  await loadSplat(SRC);
-
-  addEventListener('resize', ()=>{
-    camera.aspect = innerWidth/innerHeight;
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  renderer.setAnimationLoop(()=>{
+  renderer.setAnimationLoop(() => {
     controls.update();
     renderer.render(scene, camera);
   });
