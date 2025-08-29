@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (mínimo, estable)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
+
+  <!-- Import maps con shim -->
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+  <script type="importmap-shim">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module-shim">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+// Parámetros: ?src=archivo.ksplat&px=0.9
+const q=new URLSearchParams(location.search);
+const SRC = q.get('src') || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+const PR  = parseFloat(q.get('px') || "1.0");
+
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log('Cargando módulos…');
+    const GS = await import('@mkkellogg/gaussian-splats-3d');
+
+    const head = await fetch(SRC, {method:'HEAD'});
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+SRC);
+
+    // Viewer oficial, sin tocar internals
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.Inline ?? 1,   // botón VR (Inline/Immersive según build)
+      sharedMemoryForWorkers: false,          // necesario en GitHub Pages
+      gpuAcceleratedSort: false,
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
+    });
+
+    // Pixel ratio para Quest (baja si falta memoria)
+    viewer.renderer?.setPixelRatio?.(PR);
+
+    // Carga KSPLAT y arranca
+    await viewer.addSplatScene(SRC, { format: GS.SceneFormat.KSplat, showLoadingUI: true });
+    viewer.start();
+
+    // Foveated (si existe) ayuda en Quest
+    viewer.renderer?.xr?.setFoveation?.(0.7);
+
+    log('Listo. (Si está rotado, luego ajustamos re-exportando el KSPLAT).');
+  }catch(err){
+    log('ERROR: '+(err?.message||err));
+  }
+})();
+</script>
+</body>
+</html>
