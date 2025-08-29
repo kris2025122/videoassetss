@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (mínimo + flip canvas + perf)</title>
+  <title>GS Viewer (mínimo + rot/offset cámara + perf)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
@@ -26,12 +26,26 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Parámetros: ?src=archivo.ksplat&px=0.9&aa=0&flip=x|y|z
-const q=new URLSearchParams(location.search);
-const SRC  = q.get('src') || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
-const PR   = parseFloat(q.get('px') || "0.9");     // 0.85–0.9 va bien en Quest
-const AA   = (q.get('aa') ?? "0") !== "0";         // antialias off por defecto
-const FLIP = (q.get('flip') || "").toLowerCase();  // x|y|z (z = giro pantalla 180°)
+//  URL params:
+//    src=archivo.ksplat   (opcional, default = tu ksplat actual)
+//    px=0.85..1.0         (pixelRatio; 0.85-0.9 recomendado en Quest 3)
+//    aa=0|1               (antialias; 0 por defecto en Quest)
+//    rot=x180|y180|z180   (giro aplicado al PIVOT de la cámara)
+//    up=1.5               (eleva la cámara en metros; + sube, - baja)
+const q   = new URLSearchParams(location.search);
+const SRC = q.get('src') || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+const PR  = parseFloat(q.get('px') || "0.9");
+const AA  = (q.get('aa') ?? "0") !== "0";
+const rotQ= (q.get('rot') || "x180").toLowerCase();
+const UP  = parseFloat(q.get('up') || "1.5");
+
+// parse rot eje+grados
+let AXIS='x', DEG=180;
+if (/^[xyz]-?\d+(\.\d+)?$/.test(rotQ)) {
+  AXIS = rotQ[0];
+  DEG  = parseFloat(rotQ.slice(1));
+}
+const RAD = DEG*Math.PI/180;
 
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
@@ -39,7 +53,8 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
 (async()=>{
   try{
     log('Cargando módulos…');
-    const GS = await import('@mkkellogg/gaussian-splats-3d');
+    const THREE = await import('three');
+    const GS    = await import('@mkkellogg/gaussian-splats-3d');
 
     const head = await fetch(SRC, {method:'HEAD'});
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
@@ -54,35 +69,70 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       antialiased: AA,
       logLevel: GS.LogLevel?.Info ?? 1
     });
-
     viewer.renderer?.setPixelRatio?.(PR);
 
     await viewer.addSplatScene(SRC, { format: GS.SceneFormat.KSplat, showLoadingUI: true });
     viewer.start();
 
-    // === GIRO directo sobre el CANVAS ===
-    const canvas = viewer.renderer?.domElement;
-    if (canvas) {
-      // Asegura que el transform afecte al canvas
-      canvas.style.position = 'absolute';
-      canvas.style.top = '0';
-      canvas.style.left = '0';
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.transformOrigin = '50% 50%';
-      canvas.style.willChange = 'transform';
-
-      if (FLIP === 'x')      canvas.style.transform = 'perspective(1000px) rotateX(180deg)';
-      else if (FLIP === 'y') canvas.style.transform = 'perspective(1000px) rotateY(180deg)';
-      else if (FLIP === 'z') canvas.style.transform = 'rotate(180deg)'; // = rotateZ(180deg)
-
-      if (FLIP) log('Flip aplicado en '+FLIP.toUpperCase());
+    // --------- Esperar y localizar cámara + escena (muchos fallbacks) ----------
+    function getScene(v){
+      return v.stage?.scene || v.stage?._scene ||
+             v.scene || v._scene ||
+             v.renderer?.scene || v.renderer?._scene || null;
+    }
+    function getCamera(v){
+      return v.camera || v._camera || v.stage?.camera || v.renderer?.camera || null;
+    }
+    function sniffCameraFromScene(scene){
+      let cam = null;
+      scene?.traverse?.(o=>{ if(!cam && (o.isCamera || o.type?.includes('Camera'))) cam=o; });
+      return cam;
+    }
+    async function waitSceneCam(v, timeout=25000){
+      const t0=performance.now();
+      while(performance.now()-t0 < timeout){
+        let scene = getScene(v);
+        let cam   = getCamera(v) || sniffCameraFromScene(scene);
+        if(scene && cam) return {scene, cam};
+        await new Promise(r=>setTimeout(r,120));
+      }
+      return null;
     }
 
-    // Un poco más de perf en Quest si existe:
+    log('Ajustando cámara (rot '+AXIS+DEG+'°, up '+UP+'m)…');
+    const ready = await waitSceneCam(viewer);
+    if(!ready){ log('No se encontró cámara/escena, se mostrará tal cual.'); return; }
+
+    const { scene, cam } = ready;
+
+    // --------- Pivot de CÁMARA: rotación + offset vertical ----------
+    const pivot = new THREE.Object3D();
+    pivot.name = 'CameraPivot_auto';
+    const parent = cam.parent || scene;
+    parent.remove(cam);
+    pivot.add(cam);
+    scene.add(pivot);
+
+    // rotación 180° (o lo que pidas) sobre el eje solicitado
+    if (AXIS === 'x') pivot.rotation.x += RAD;
+    else if (AXIS === 'y') pivot.rotation.y += RAD;
+    else pivot.rotation.z += RAD;
+
+    // subir/bajar la cámara
+    pivot.position.y += UP;
+
+    pivot.updateMatrixWorld(true);
+
+    // si existen controles orbit, centra el target cerca del origen
+    if (viewer.controls?.target) {
+      viewer.controls.target.set(0, 0, 0);
+      viewer.controls.update?.();
+    }
+
+    // XR foveation (si está disponible) = más fps en Quest
     viewer.renderer?.xr?.setFoveation?.(0.7);
 
-    log('Listo. Usa ?flip=z (o x/y) y ajusta ?px= para rendimiento.');
+    log('OK: rotación/offset aplicados.');
   }catch(err){
     log('ERROR: '+(err?.message||err));
   }
