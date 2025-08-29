@@ -10,7 +10,7 @@
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
   </style>
 
-  <!-- Import maps (con shim) -->
+  <!-- Import maps -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
   <script type="importmap-shim">
   {
@@ -28,7 +28,7 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Parámetros URL: ?src=...&rot=x180|y180|z180&dist=1.35&px=0.9
+// Parámetros: ?src=...&rot=x180|y180|z180&dist=1.35&px=0.9
 const q = new URLSearchParams(location.search);
 const SRC  = q.get('src')  || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 const ROTQ = (q.get('rot') || "x180").toLowerCase();
@@ -53,7 +53,7 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+SRC);
 
-    // Viewer oficial (WebGL + WebXR)
+    // Crear viewer
     const viewer = new GS.Viewer({
       webXRMode: GS.WebXRMode?.Inline ?? 1,   // botón VR
       sharedMemoryForWorkers: false,
@@ -65,9 +65,13 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     });
     viewer.renderer?.setPixelRatio?.(PR);
 
+    // >>> Arranca primero (clave para que exponga cámara/escena)
+    viewer.start();
+
+    // Carga KSPLAT
     await viewer.addSplatScene(SRC, { format: GS.SceneFormat.KSplat, showLoadingUI: true });
 
-    // ==== Esperar cámara + escena de forma robusta ====
+    // ===== Espera robusta a cámara/escena (después de start) =====
     function getScene(v){
       return v.stage?.scene || v.stage?._scene ||
              v.scene || v._scene ||
@@ -76,17 +80,16 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     function getCamera(v){
       return v.camera || v._camera || v.stage?.camera || v.renderer?.camera || null;
     }
-    async function waitForSceneAndCamera(v, timeout=15000){
+    async function waitForSceneAndCamera(v, timeout=20000){
       const t0=performance.now();
       while(performance.now()-t0 < timeout){
         let scene = getScene(v);
         let cam   = getCamera(v);
         if(!cam && scene){
-          // si no expone camera, busca alguna en el grafo
           scene.traverse?.(o=>{ if(!cam && o.isCamera) cam=o; });
         }
         if(scene && cam) return {scene, cam};
-        await new Promise(r=>setTimeout(r,120));
+        await new Promise(r=>setTimeout(r,150));
       }
       return null;
     }
@@ -96,7 +99,7 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     if(!ready) throw new Error('No se obtuvo cámara/escena (timeout).');
     const { scene, cam } = ready;
 
-    // ==== Pivot de cámara (rotación/centro sin tocar los splats) ====
+    // ===== Pivot de cámara: rotación + distancia sin tocar splats =====
     const pivot = new THREE.Object3D();
     pivot.name = 'CameraPivot';
     const parent = cam.parent || scene;
@@ -104,18 +107,15 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     pivot.add(cam);
     scene.add(pivot);
 
-    // Rotación global (equivalente a girar el mundo 180°)
     pivot.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);
     pivot.updateMatrixWorld(true);
 
-    // Distancia inicial (sobre Z del pivot)
     cam.position.set(0, 0, DIST);
     cam.lookAt(0,0,0);
 
-    // Foveated (si está disponible) = más estable en Quest
+    // Foveated (si está disponible)
     viewer.renderer?.xr?.setFoveation?.(0.7);
 
-    viewer.start();
     log('Listo. VR activo. Rotación por pivot aplicada.');
   }catch(err){
     log('ERROR: '+(err?.message||err));
