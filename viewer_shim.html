@@ -2,123 +2,79 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>GS Viewer (PC + Quest 3)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stable GS Viewer</title>
   <style>
-    html,body{margin:0;height:100%;background:#000}
-    #err{position:fixed;left:0;right:0;bottom:0;color:#bbb;font:12px/1.4 monospace;padding:6px 10px}
+    body { margin: 0; background: #000; }
+    canvas { display: block; }
   </style>
 </head>
 <body>
-<div id="err"></div>
 <script type="module">
-  // === Versiones conservadoras (evita romper Quest) ===
   import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
   import { OrbitControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js';
-  import { VRButton } from 'https://unpkg.com/three@0.152.2/examples/jsm/webxr/VRButton.js';
-
-  // Loaders probados (Kellogg)
   import { KTXSplatLoader } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/KTXSplatLoader.js';
-  import { SplatLoader    } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/SplatLoader.js';
+  import { SplatLoader } from 'https://cdn.jsdelivr.net/gh/mkkellogg/GaussianSplats3D@main/jsm/SplatLoader.js';
 
-  const log = (m)=>{ const el=document.getElementById('err'); el.textContent=m; console.log(m); };
-
-  // === Parámetros ===
   const q = new URLSearchParams(location.search);
-  const SRC = q.get('src') || 'HARAKBUTvrhm.ksplat'; // tu archivo
-  // Si tu “al revés” era en Z, cambia 'x' por 'z'
-  const ROT_AXIS = q.get('rotAxis') || 'x';
-  const ROT_DEG  = Number(q.get('rotDeg') || 180); // 180 por defecto
+  const SRC = q.get('src') || 'HARAKBUTvrhm.ksplat';
 
-  // === Ajustes seguros para Quest 3 ===
-  const isQuest = /OculusBrowser|Quest/i.test(navigator.userAgent);
-  const renderer = new THREE.WebGLRenderer({
-    antialias: !isQuest,        // antialias off en Quest para estabilidad
-    alpha: false,
-    powerPreference: 'high-performance',
-    preserveDrawingBuffer: false
-  });
-  renderer.xr.enabled = true;   // habilita WebXR (botón VR)
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(isQuest ? 1 : Math.min(devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
 
-  // Botón VR: sólo si el navegador lo soporta (no rompe 2D si no hay XR)
-  if (navigator.xr && navigator.xr.isSessionSupported) {
-    try {
-      const ok = await navigator.xr.isSessionSupported('immersive-vr');
-      if (ok) document.body.appendChild(VRButton.createButton(renderer));
-    } catch(e) {
-      // fallback: aún así añadimos el botón; en Quest aparece
-      document.body.appendChild(VRButton.createButton(renderer));
-    }
-  } else {
-    // En algunos Quest antiguos, VRButton igualmente funciona
-    document.body.appendChild(VRButton.createButton(renderer));
-  }
-
-  // Escena/cámara
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x000000);
-  const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 2000);
-  camera.position.set(0,0,3);
+  const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
+  camera.position.set(0, 0, 3);
 
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.target.set(0,0,0);
+  controls.target.set(0, 0, 0);
+  controls.update();
 
-  const root = new THREE.Group();
-  scene.add(root);
+  const group = new THREE.Group();
+  scene.add(group);
 
-  // Carga robusta (.ksplat o .splat)
-  async function loadSplat(src){
-    try{
-      let obj;
-      const s = src.toLowerCase();
-      if (s.endsWith('.ksplat') || s.endsWith('.ktx2') || s.endsWith('.ktxsplat')){
-        const loader = new KTXSplatLoader();
-        obj = await loader.loadAsync(src);
-      } else if (s.endsWith('.splat')) {
-        const loader = new SplatLoader();
-        obj = await loader.loadAsync(src);
-      } else {
-        throw new Error('Usa .ksplat o .splat (mismo dominio/ruta).');
-      }
-
-      // Instancia única
-      root.clear();
-      root.add(obj);
-
-      // Mantener “al revés” (180°)
-      if (ROT_AXIS==='x') obj.rotation.x = Math.PI;
-      else if (ROT_AXIS==='y') obj.rotation.y = Math.PI;
-      else obj.rotation.z = Math.PI;
-
-      // Centrado + encuadre
-      const box = new THREE.Box3().setFromObject(obj);
-      const sphere = box.getBoundingSphere(new THREE.Sphere());
-      obj.position.sub(sphere.center);
-      const dist = Math.max(2.5, sphere.radius*2.4);
-      camera.position.set(0,0,dist);
-      controls.target.set(0,0,0); controls.update();
-
-      log('OK: cargado ' + src);
-    }catch(e){
-      log('Error al cargar: ' + e.message);
+  async function loadSplat(src) {
+    let obj;
+    if (src.endsWith('.ksplat')) {
+      const loader = new KTXSplatLoader();
+      obj = await loader.loadAsync(src);
+    } else if (src.endsWith('.splat')) {
+      const loader = new SplatLoader();
+      obj = await loader.loadAsync(src);
+    } else {
+      alert("Usa .ksplat o .splat");
+      return;
     }
+
+    group.clear();
+    group.add(obj);
+
+    // 🔹 Rotación 180° (para dejarlo al revés como pediste)
+    obj.rotation.x = Math.PI;
+
+    // 🔹 Centrado en origen
+    const box = new THREE.Box3().setFromObject(obj);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    obj.position.sub(sphere.center);
+
+    // 🔹 Ajustar cámara
+    const dist = Math.max(2.5, sphere.radius * 2.4);
+    camera.position.set(0, 0, dist);
+    controls.target.set(0, 0, 0);
+    controls.update();
   }
 
-  await loadSplat(SRC);
+  loadSplat(SRC);
 
-  // Resize
-  addEventListener('resize', ()=>{
-    camera.aspect = innerWidth/innerHeight;
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Loop
-  renderer.setAnimationLoop(()=>{
+  renderer.setAnimationLoop(() => {
     controls.update();
     renderer.render(scene, camera);
   });
