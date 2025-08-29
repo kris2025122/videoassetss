@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (Three.js + *static* Loader + VR)</title>
+  <title>GS Viewer (robusto: loaders + fallback Viewer)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     canvas{display:block;width:100vw;height:100vh}
@@ -11,10 +11,8 @@
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:9999}
   </style>
 
-  <!-- es-module-shims para import maps -->
+  <!-- Import maps (ESM en navegadores) -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
-
-  <!-- Import map -->
   <script type="importmap-shim">
   {
     "imports": {
@@ -48,21 +46,39 @@ addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
 
 (async()=>{
+  const THREE = await import('three');
+  const { VRButton } = await import('three/examples/jsm/webxr/VRButton.js');
+  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
+  const GS = await import('@mkkellogg/gaussian-splats-3d');
+
+  log('Loaders exportados: '+Object.keys(GS).filter(k=>/Loader$/i.test(k)).join(', '));
+
+  // Helper: centra, rota, acerca cámara
+  function centerRotateAndFrame(obj, camera, controls) {
+    const box = new THREE.Box3().setFromObject(obj);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const radius = Math.max(1e-6, size.length()*0.5);
+    obj.position.sub(center);
+    obj.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);
+    obj.updateMatrixWorld(true);
+    const dist = radius * DIST;
+    camera.near = Math.max(0.01, radius/1000);
+    camera.far  = Math.max(2000, radius*10);
+    camera.updateProjectionMatrix();
+    camera.position.set(0,0,dist);
+    camera.lookAt(0,0,0);
+    controls?.target.set(0,0,0);
+    controls?.update?.();
+  }
+
+  // 1) Intento: cargar con loaders (variantes estáticas/con instancia y métodos comunes)
   try{
-    log('Cargando módulos…');
-    const THREE = await import('three');
-    const { VRButton } = await import('three/examples/jsm/webxr/VRButton.js');
-    const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
-    const GS = await import('@mkkellogg/gaussian-splats-3d');
-
-    log('Loaders exportados: ' + Object.keys(GS).filter(k=>/Loader$/i.test(k)).join(', '));
-
-    // HEAD del archivo
     const head = await fetch(SRC, {method:'HEAD'});
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
-    if(!head.ok) throw new Error('No se puede acceder a '+SRC);
+    if(!head.ok) throw new Error('No accesible: '+SRC);
 
-    // ---- Three.js base ----
+    // Escena Three base (para ruta "loader")
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
     const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -71,74 +87,54 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
     document.body.appendChild(VRButton.createButton(renderer));
-
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    // ---- CARGA KSPLAT usando SOLO funciones estáticas ----
-    log('Cargando KSPLAT…');
+    const progressCb=(p)=>{ if(p && p.total){ const pc=Math.round(100*p.loaded/p.total); if(pc%10===0) log(`Progreso: ${pc}%`);} };
 
-    const progressCb=(p)=>{
-      if(p && p.total){
-        const pct=Math.round(100*p.loaded/p.total);
-        if(pct%10===0) log(`Progreso: ${pct}%`);
+    async function tryLoad(ClassOrObj) {
+      if(!ClassOrObj) return null;
+      // estáticos
+      for(const fn of ['loadAsync','load','loadFromUrl','fromUrl','parseAsync','parse']){
+        if(typeof ClassOrObj[fn]==='function'){
+          if(fn.startsWith('parse')){
+            const ab = await (await fetch(SRC)).arrayBuffer();
+            return await ClassOrObj[fn](ab);
+          }else{
+            return await ClassOrObj[fn](SRC, progressCb);
+          }
+        }
       }
-    };
-
-    // Intento 1: KSplatLoader.load(url, onProgress)
-    let out=null;
-    if(typeof GS.KSplatLoader?.load === 'function'){
-      out = await GS.KSplatLoader.load(SRC, progressCb);
-    }
-
-    // Intento 2: SplatLoader.load(url, onProgress)  (algunas builds lo exponen así)
-    if(!out && typeof GS.SplatLoader?.load === 'function'){
-      out = await GS.SplatLoader.load(SRC, progressCb);
-    }
-
-    // Intento 3: parse desde ArrayBuffer (por si no hay .load)
-    if(!out){
-      log('Probando parse desde ArrayBuffer…');
-      const ab = await (await fetch(SRC)).arrayBuffer();
-
-      if(typeof GS.KSplatLoader?.parse === 'function'){
-        out = GS.KSplatLoader.parse(ab);
-      } else if (typeof GS.SplatLoader?.parse === 'function'){
-        out = GS.SplatLoader.parse(ab);
+      // instancia
+      if(typeof ClassOrObj==='function'){
+        const inst = new ClassOrObj();
+        for(const fn of ['loadAsync','load','loadFromUrl','fromUrl','parseAsync','parse']){
+          if(typeof inst[fn]==='function'){
+            if(fn.startsWith('parse')){
+              const ab = await (await fetch(SRC)).arrayBuffer();
+              return await inst[fn](ab);
+            }else{
+              return await inst[fn](SRC, progressCb);
+            }
+          }
+        }
       }
+      return null;
     }
 
-    if(!out){
-      log('Exports GS3D: '+Object.keys(GS).join(', '));
-      throw new Error('No se pudo cargar el KSPLAT con las variantes estáticas disponibles.');
-    }
+    log('Cargando KSPLAT (vía loaders)…');
+    let out = null;
+    out ||= await tryLoad(GS.KSplatLoader);
+    out ||= await tryLoad(GS.SplatLoader);
 
-    const root = out.scene || out.object || out;   // normalizar
-    if(!(root && root.isObject3D)){
-      throw new Error('El loader no devolvió un Object3D válido.');
-    }
+    if(!out) throw new Error('loaders no compatibles');
 
-    // ---- Centrar + Rotar ----
-    const box = new THREE.Box3().setFromObject(root);
-    const center = box.getCenter(new THREE.Vector3());
-    const size   = box.getSize(new THREE.Vector3());
-    const radius = Math.max(1e-6, size.length()*0.5);
+    const root = out.scene || out.object || out;
+    if(!(root && root.isObject3D)) throw new Error('loader no devolvió Object3D');
 
-    root.position.sub(center);
-    root.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);
-    root.updateMatrixWorld(true);
     root.frustumCulled=false;
     scene.add(root);
-
-    // ---- Cámara ----
-    const dist = radius * DIST;
-    camera.near = Math.max(0.01, radius/1000);
-    camera.far  = Math.max(2000, radius*10);
-    camera.updateProjectionMatrix();
-    camera.position.set(0,0,dist);
-    camera.lookAt(0,0,0);
-    controls.target.set(0,0,0);
-    controls.update();
+    centerRotateAndFrame(root, camera, controls);
 
     addEventListener('resize', ()=>{
       camera.aspect=innerWidth/innerHeight;
@@ -147,9 +143,55 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     });
 
     renderer.setAnimationLoop(()=>{ controls.update(); renderer.render(scene,camera); });
-    log('Listo. Rotado y centrado. Botón VR activo.');
+    log('OK con loader. Botón VR activo.');
+    return; // ÉXITO, no seguimos al fallback
   }catch(err){
-    log('ERROR: '+(err?.message||err));
+    log('Loader falló: '+(err?.message||err));
+  }
+
+  // 2) Fallback: usar Viewer oficial (el tuyo que sí cargaba), y luego rotar/centrar
+  try{
+    log('Fallback Viewer…');
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.Inline ?? 1,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: false,
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
+    });
+    viewer.renderer?.setPixelRatio?.(PR);
+
+    const node = await viewer.addSplatScene(SRC, { format: GS.SceneFormat.KSplat, showLoadingUI: true });
+
+    // Espera a que el objeto esté en el grafo y tómalo
+    const getRoot = ()=>{
+      // intenta varias rutas
+      const cand = [node?.scene ?? node, viewer.scene, viewer._scene, viewer.renderer?.scene]
+        .filter(Boolean);
+      for(const r of cand){
+        let found=null;
+        r.traverse?.(o=>{ if(!found && (o.isObject3D)) found=o; });
+        if(found) return found;
+      }
+      return null;
+    };
+
+    let root=null, t0=performance.now();
+    while(!root && performance.now()-t0<8000){
+      root=getRoot();
+      if(!root) await new Promise(r=>setTimeout(r,100));
+    }
+    if(!root) throw new Error('no se pudo ubicar el Object3D en Viewer');
+
+    // Necesitamos THREE para box/centro; lo tenemos arriba.
+    centerRotateAndFrame(root, (viewer.camera||viewer._camera||viewer.renderer?.camera), (viewer.controls||viewer._controls||viewer.orbitControls||viewer._orbitControls));
+
+    viewer.start();
+    log('OK con Viewer. Botón VR activo.');
+  }catch(err){
+    log('ERROR fallback Viewer: '+(err?.message||err));
   }
 })();
 </script>
