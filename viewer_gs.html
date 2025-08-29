@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>GS Viewer (oficial: rotado + centrado + VR)</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
+         color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
+  </style>
+
+  <!-- Import maps en navegador -->
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+  <script type="importmap-shim">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="log">Inicializando…</div>
+
+<script type="module-shim">
+const $log=document.getElementById('log');
+const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
+
+// === Parámetros URL ===  ?src=archivo.ksplat&rot=x180|y180|z180&dist=1.35&px=1.0
+const q=new URLSearchParams(location.search);
+const SRC  = q.get('src')  || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+const ROTQ = (q.get('rot') || "x180").toLowerCase();
+const DIST = parseFloat(q.get('dist') || "1.35");
+const PR   = parseFloat(q.get('px')   || "1.0");
+const ROTATE={x:0,y:0,z:0};
+if(ROTQ==="x180") ROTATE.x=Math.PI;
+if(ROTQ==="y180") ROTATE.y=Math.PI;
+if(ROTQ==="z180") ROTATE.z=Math.PI;
+
+addEventListener('error', e=> log('ERROR(win): '+e.message));
+addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
+
+(async()=>{
+  try{
+    log('Cargando módulos…');
+    const THREE = await import('three');
+    const GS    = await import('@mkkellogg/gaussian-splats-3d');
+
+    if(!(GS.Viewer && GS.SceneFormat)){
+      log('Exports GS3D: '+Object.keys(GS).join(', '));
+      throw new Error('Viewer/SceneFormat no disponibles.');
+    }
+
+    const head = await fetch(SRC, {method:'HEAD'});
+    log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
+    if(!head.ok) throw new Error('No se puede acceder a '+SRC);
+
+    // === Viewer oficial ===
+    const viewer = new GS.Viewer({
+      webXRMode: GS.WebXRMode?.Inline ?? 1,  // botón VR
+      sharedMemoryForWorkers: false,         // Pages no es COOP/COEP
+      gpuAcceleratedSort: false,
+      useBuiltInControls: true,
+      ignoreDevicePixelRatio: true,
+      antialiased: true,
+      logLevel: GS.LogLevel?.Info ?? 1
+    });
+    viewer.renderer?.setPixelRatio?.(PR);    // reduce memoria en Quest
+
+    // Carga KSPLAT
+    await viewer.addSplatScene(SRC, {
+      format: GS.SceneFormat.KSplat,
+      showLoadingUI: true
+    });
+
+    // === Rotar + centrar + acercar ===
+    // Usamos la escena raíz del viewer (siempre existe)
+    const root = viewer.scene || viewer._scene || viewer.renderer?.scene;
+    if(!root) throw new Error('No se obtuvo la escena del Viewer.');
+
+    // Calcular bbox global y centrar en (0,0,0)
+    const box = new THREE.Box3().setFromObject(root);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const radius = Math.max(1e-6, size.length()*0.5);
+
+    root.position.sub(center);                        // centrar
+    root.rotation.set(ROTATE.x, ROTATE.y, ROTATE.z);  // girar 180°
+    root.updateMatrixWorld(true);
+
+    // Cámara y controles (si existen)
+    const cam = viewer.camera || viewer._camera || viewer.renderer?.camera || null;
+    const controls = viewer.controls || viewer._controls || viewer.orbitControls || viewer._orbitControls || null;
+
+    const dist = radius * DIST;
+    if (cam && cam.position && cam.lookAt) {
+      cam.near = Math.max(0.01, radius/1000);
+      cam.far  = Math.max(2000, radius*10);
+      cam.updateProjectionMatrix?.();
+      cam.position.set(0,0,dist);
+      cam.lookAt(0,0,0);
+    }
+    if (controls && controls.target) {
+      controls.target.set(0,0,0);
+      controls.update?.();
+    }
+
+    viewer.start();
+    log('Listo. Rotado + centrado + VR.');
+  }catch(err){
+    log('ERROR: '+(err?.message||err));
+  }
+})();
+</script>
+</body>
+</html>
