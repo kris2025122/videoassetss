@@ -3,12 +3,11 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (mínimo + flip + perf)</title>
+  <title>GS Viewer (mínimo + flip canvas + perf)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     #log{position:fixed;left:0;top:0;max-width:80vw;background:rgba(0,0,0,.65);
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:10}
-    #wrap{position:fixed;inset:0;transform-origin:center center;will-change:transform}
   </style>
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
   <script type="importmap-shim">
@@ -21,30 +20,21 @@
   </script>
 </head>
 <body>
-<div id="wrap"></div>
 <div id="log">Inicializando…</div>
 
 <script type="module-shim">
 const $log=document.getElementById('log');
-const $wrap=document.getElementById('wrap');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
 // Parámetros: ?src=archivo.ksplat&px=0.9&aa=0&flip=x|y|z
 const q=new URLSearchParams(location.search);
-const SRC = q.get('src') || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat"; // tu default actual
-const PR  = parseFloat(q.get('px') || "0.9");  // 0.9 recomendado en Quest
-const AA  = (q.get('aa') ?? "0") !== "0";      // antialias off por defecto
-const FLIP = (q.get('flip') || "").toLowerCase(); // x|y|z para 180°
+const SRC  = q.get('src') || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
+const PR   = parseFloat(q.get('px') || "0.9");     // 0.85–0.9 va bien en Quest
+const AA   = (q.get('aa') ?? "0") !== "0";         // antialias off por defecto
+const FLIP = (q.get('flip') || "").toLowerCase();  // x|y|z (z = giro pantalla 180°)
 
 addEventListener('error', e=> log('ERROR(win): '+e.message));
 addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.message||e.reason)));
-
-function applyFlipCSS(axis){
-  // gira el canvas en 2D (pantalla). En VR esto no afecta.
-  if(axis === 'x'){ $wrap.style.transform = 'rotateX(180deg)'; }
-  else if(axis === 'y'){ $wrap.style.transform = 'rotateY(180deg)'; }
-  else if(axis === 'z'){ $wrap.style.transform = 'rotateZ(180deg)'; }
-}
 
 (async()=>{
   try{
@@ -56,7 +46,7 @@ function applyFlipCSS(axis){
     if(!head.ok) throw new Error('No se puede acceder a '+SRC);
 
     const viewer = new GS.Viewer({
-      webXRMode: GS.WebXRMode?.Inline ?? 1,   // botón VR presente (si la build lo expone)
+      webXRMode: GS.WebXRMode?.Inline ?? 1,
       sharedMemoryForWorkers: false,
       gpuAcceleratedSort: false,
       useBuiltInControls: true,
@@ -65,26 +55,34 @@ function applyFlipCSS(axis){
       logLevel: GS.LogLevel?.Info ?? 1
     });
 
-    // Ajuste de calidad
     viewer.renderer?.setPixelRatio?.(PR);
 
-    // Carga KSPLAT
     await viewer.addSplatScene(SRC, { format: GS.SceneFormat.KSplat, showLoadingUI: true });
-
-    // Arranca
     viewer.start();
 
-    // Mueve el canvas dentro del wrapper y aplica flip CSS para 2D
+    // === GIRO directo sobre el CANVAS ===
     const canvas = viewer.renderer?.domElement;
     if (canvas) {
-      $wrap.appendChild(canvas);
-      if (FLIP) applyFlipCSS(FLIP);
+      // Asegura que el transform afecte al canvas
+      canvas.style.position = 'absolute';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.transformOrigin = '50% 50%';
+      canvas.style.willChange = 'transform';
+
+      if (FLIP === 'x')      canvas.style.transform = 'perspective(1000px) rotateX(180deg)';
+      else if (FLIP === 'y') canvas.style.transform = 'perspective(1000px) rotateY(180deg)';
+      else if (FLIP === 'z') canvas.style.transform = 'rotate(180deg)'; // = rotateZ(180deg)
+
+      if (FLIP) log('Flip aplicado en '+FLIP.toUpperCase());
     }
 
-    // Foveated si existe (un poco más de perf en Quest)
+    // Un poco más de perf en Quest si existe:
     viewer.renderer?.xr?.setFoveation?.(0.7);
 
-    log('Listo. Usa ?flip=x|y|z para girar 180° en pantalla y ?px= para rendimiento.');
+    log('Listo. Usa ?flip=z (o x/y) y ajusta ?px= para rendimiento.');
   }catch(err){
     log('ERROR: '+(err?.message||err));
   }
