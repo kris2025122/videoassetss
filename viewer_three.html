@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>GS Viewer (Three.js + SplatLoader + VR)</title>
+  <title>GS Viewer (Three.js + *static* Loader + VR)</title>
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     canvas{display:block;width:100vw;height:100vh}
@@ -11,8 +11,10 @@
          color:#fff;padding:8px 10px;font:12px/1.4 monospace;white-space:pre-wrap;z-index:9999}
   </style>
 
+  <!-- es-module-shims para import maps -->
   <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 
+  <!-- Import map -->
   <script type="importmap-shim">
   {
     "imports": {
@@ -30,14 +32,13 @@
 const $log=document.getElementById('log');
 const log=m=>{ $log.textContent+='\n'+m; console.log(m); };
 
-// Parámetros por URL: ?src=…&rot=x180|y180|z180&dist=1.35&px=1
+// Parámetros: ?src=…&rot=x180|y180|z180&dist=1.35&px=1.0
 const q=new URLSearchParams(location.search);
 const SRC  = q.get('src')  || "TESTCOMPLETOPOST_keep75_k64_c2_sh2.ksplat";
 const ROTQ = (q.get('rot') || "x180").toLowerCase();
 const DIST = parseFloat(q.get('dist') || "1.35");
 const PR   = parseFloat(q.get('px')   || "1.0");
 
-// Rotación elegida
 const ROTATE={x:0,y:0,z:0};
 if(ROTQ==="x180") ROTATE.x=Math.PI;
 if(ROTQ==="y180") ROTATE.y=Math.PI;
@@ -54,27 +55,29 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
     const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
     const GS = await import('@mkkellogg/gaussian-splats-3d');
 
-    // Comprobación de loaders disponibles
-    log('Loaders: ' + Object.keys(GS).filter(k=>/Loader$/i.test(k)).join(', '));
+    log('Loaders exportados: ' + Object.keys(GS).filter(k=>/Loader$/i.test(k)).join(', '));
 
+    // HEAD del archivo
     const head = await fetch(SRC, {method:'HEAD'});
     log('HEAD '+head.status+' '+(head.ok?'OK':'ERROR'));
     if(!head.ok) throw new Error('No se puede acceder a '+SRC);
 
-    // ---- Escena base ----
+    // ---- Three.js base ----
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 5000);
     const renderer = new THREE.WebGLRenderer({antialias:true});
     renderer.setPixelRatio(PR);
     renderer.setSize(innerWidth, innerHeight);
-    renderer.xr.enabled = true;                           // WebXR
+    renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
     document.body.appendChild(VRButton.createButton(renderer));
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    // ---- Carga KSPLAT (prueba estático/instancia en SplatLoader y KSplatLoader) ----
+    // ---- CARGA KSPLAT usando SOLO funciones estáticas ----
     log('Cargando KSPLAT…');
+
     const progressCb=(p)=>{
       if(p && p.total){
         const pct=Math.round(100*p.loaded/p.total);
@@ -82,34 +85,35 @@ addEventListener('unhandledrejection', e=> log('ERROR(promise): '+(e.reason?.mes
       }
     };
 
-    let splat=null;
-
-    // 1) SplatLoader.load (estático)
-    if(!splat && typeof GS.SplatLoader?.load === 'function'){
-      splat = await GS.SplatLoader.load(SRC, progressCb);
-    }
-    // 2) new SplatLoader().load (instancia)
-    if(!splat && typeof GS.SplatLoader === 'function'){
-      const l=new GS.SplatLoader();
-      if(typeof l.load === 'function') splat = await l.load(SRC, progressCb);
-    }
-    // 3) KSplatLoader.load (estático)
-    if(!splat && typeof GS.KSplatLoader?.load === 'function'){
-      splat = await GS.KSplatLoader.load(SRC, progressCb);
-    }
-    // 4) new KSplatLoader().load (instancia)
-    if(!splat && typeof GS.KSplatLoader === 'function'){
-      const l=new GS.KSplatLoader();
-      if(typeof l.load === 'function') splat = await l.load(SRC, progressCb);
+    // Intento 1: KSplatLoader.load(url, onProgress)
+    let out=null;
+    if(typeof GS.KSplatLoader?.load === 'function'){
+      out = await GS.KSplatLoader.load(SRC, progressCb);
     }
 
-    if(!splat){
+    // Intento 2: SplatLoader.load(url, onProgress)  (algunas builds lo exponen así)
+    if(!out && typeof GS.SplatLoader?.load === 'function'){
+      out = await GS.SplatLoader.load(SRC, progressCb);
+    }
+
+    // Intento 3: parse desde ArrayBuffer (por si no hay .load)
+    if(!out){
+      log('Probando parse desde ArrayBuffer…');
+      const ab = await (await fetch(SRC)).arrayBuffer();
+
+      if(typeof GS.KSplatLoader?.parse === 'function'){
+        out = GS.KSplatLoader.parse(ab);
+      } else if (typeof GS.SplatLoader?.parse === 'function'){
+        out = GS.SplatLoader.parse(ab);
+      }
+    }
+
+    if(!out){
       log('Exports GS3D: '+Object.keys(GS).join(', '));
-      throw new Error('No se pudo cargar el KSPLAT (ninguna variante de loader funcionó).');
+      throw new Error('No se pudo cargar el KSPLAT con las variantes estáticas disponibles.');
     }
 
-    // En algunas builds se retorna {scene:…} u {object:…}
-    const root = splat.scene || splat.object || splat;
+    const root = out.scene || out.object || out;   // normalizar
     if(!(root && root.isObject3D)){
       throw new Error('El loader no devolvió un Object3D válido.');
     }
